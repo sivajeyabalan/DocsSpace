@@ -1,0 +1,209 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  owner
+  admin
+  member
+  guest
+}
+
+enum TeamRole {
+  lead
+  member
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
+enum InvitationRole {
+  admin
+  member
+  guest
+}
+
+enum DocumentVisibility {
+  private
+  team
+  tenant
+}
+
+enum DocumentPermissionLevel {
+  view
+  edit
+  admin
+}
+
+enum PermissionPrincipalType {
+  user
+  team
+}
+
+model Tenant {
+  id            String         @id @default(uuid())
+  name          String
+  slug          String         @unique
+  plan          String         @default("free")
+  createdAt     DateTime       @default(now())
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+  workspaces    Workspace[]
+  teams         Team[]
+  invitations   Invitation[]
+  documents     Document[]
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String         @map("password_hash")
+  emailVerified Boolean        @default(false) @map("email_verified")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+  invitations   Invitation[]   @relation("InvitationInviter")
+  teamMembers   TeamMember[]
+  ownedDocuments Document[]    @relation("DocumentOwner")
+
+  @@map("users")
+}
+
+model Membership {
+  id        String         @id @default(uuid())
+  userId    String         @map("user_id")
+  tenantId  String         @map("tenant_id")
+  role      MembershipRole
+  joinedAt  DateTime       @default(now()) @map("joined_at")
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+  @@map("memberships")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tenantId  String   @map("tenant_id")
+  tokenHash String   @unique @map("token_hash")
+  familyId  String   @map("family_id")
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([userId, tenantId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model Workspace {
+  id        String      @id @default(uuid())
+  tenantId  String      @map("tenant_id")
+  name      String
+  slug      String
+  createdAt DateTime    @default(now()) @map("created_at")
+  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  teams     Team[]
+  documents Document[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("workspaces")
+}
+
+model Team {
+  id          String      @id @default(uuid())
+  tenantId    String      @map("tenant_id")
+  workspaceId String      @map("workspace_id")
+  name        String
+  slug        String
+  createdAt   DateTime    @default(now()) @map("created_at")
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  teamMembers TeamMember[]
+
+  @@unique([workspaceId, slug])
+  @@index([tenantId])
+  @@index([workspaceId])
+  @@map("teams")
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String   @map("team_id")
+  userId    String   @map("user_id")
+  role      TeamRole @default(member)
+  createdAt DateTime @default(now()) @map("created_at")
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@map("team_members")
+}
+
+model Invitation {
+  id          String           @id @default(uuid())
+  tenantId    String           @map("tenant_id")
+  email       String
+  role        InvitationRole
+  tokenHash   String           @unique @map("token_hash")
+  invitedById String           @map("invited_by_id")
+  status      InvitationStatus @default(pending)
+  expiresAt   DateTime         @map("expires_at")
+  acceptedAt  DateTime?        @map("accepted_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invitedBy   User             @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, email])
+  @@map("invitations")
+}
+
+model Document {
+  id          String             @id @default(uuid())
+  tenantId    String             @map("tenant_id")
+  workspaceId String             @map("workspace_id")
+  ownerId     String             @map("owner_id")
+  title       String
+  content     String             @db.LongText
+  visibility  DocumentVisibility @default(private)
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  workspace   Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  owner       User               @relation("DocumentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  permissions DocumentPermission[]
+
+  @@index([tenantId, workspaceId])
+  @@index([ownerId])
+  @@map("documents")
+}
+
+model DocumentPermission {
+  id            String                   @id @default(uuid())
+  documentId    String                   @map("document_id")
+  principalType PermissionPrincipalType  @map("principal_type")
+  principalId   String                   @map("principal_id")
+  permission    DocumentPermissionLevel
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  document      Document                 @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, principalType, principalId])
+  @@index([documentId, principalType])
+  @@index([principalType, principalId])
+  @@map("document_permissions")
+}
